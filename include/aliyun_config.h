@@ -4,8 +4,8 @@
 
 #define HEAP_CHECK_TASK 0
 
-#define MQTT_TASK 0
-#define LOCAL_OTA 1
+#define MQTT_TASK 1
+#define LOCAL_OTA 0
 #define OTA_TASK 0
 
 #define MQTT_DIRECT
