@@ -2,26 +2,35 @@
 #define ALIYUN_CONFIG_H_
 
 
+#define HEAP_CHECK_TASK 0
+
+#define MQTT_TASK 0
+#define OTA_TASK 1
+
+
 #define MQTT_DIRECT
+
+
+
 
 #define PRODUCT_KEY             "ymXuzyfmuQb"
 #define DEVICE_NAME             "esp8266_test001"
 #define DEVICE_SECRET           "32fZgRbygua80rdVNLb5femE7wHBh7G9"
 
 // These are pre-defined topics
-#define TOPIC_UPDATE            "/ymXuzyfmuQb/esp8266_test001/update"
-#define TOPIC_ERROR             "/ymXuzyfmuQb/esp8266_test001/update/error"
-#define TOPIC_GET               "/ymXuzyfmuQb/esp8266_test001/get"
-#define TOPIC_DATA              "/ymXuzyfmuQb/esp8266_test001/data"
-#define TOPIC_RELAY            "/ymXuzyfmuQb/esp8266_test001/relay"
+#define TOPIC_UPDATE            "/"PRODUCT_KEY"/"DEVICE_NAME"/update"
+#define TOPIC_ERROR             "/"PRODUCT_KEY"/"DEVICE_NAME"/update/error"
+#define TOPIC_GET               "/"PRODUCT_KEY"/"DEVICE_NAME"/get"
+#define TOPIC_DATA              "/"PRODUCT_KEY"/"DEVICE_NAME"/data"
+#define TOPIC_RELAY             "/"PRODUCT_KEY"/"DEVICE_NAME"/relay"
 
 #define WIFI_SSID       "BL_841R"
 #define WIFI_PASSWORD   "1234567890"
 #define MSG_LEN_MAX             (2048)
 
-#define OTA_MODULE 1
-#define OTA_BUF_LEN 1460
 
+#define OTA_BUF_LEN 1460
+#define ERASE_FLASH_SIZE 400 * 1024
 #if 1
 #define EXAMPLE_TRACE(fmt, args...)  \
     do { \

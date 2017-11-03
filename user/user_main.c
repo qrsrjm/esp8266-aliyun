@@ -21,18 +21,16 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *
  */
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_common.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
+#include "esp_common.h"
 
 #include "esp8266/ets_sys.h"
 #include "apps/sntp.h"
@@ -45,6 +43,9 @@
 #include "aliyun_ota.h"
 
 static int got_ip_flag = 0;
+static int binary_file_length = 0;
+LOCAL os_timer_t ota_timer;
+
 /******************************************************************************
  * FunctionName : user_rf_cal_sector_set
  * Description  : SDK just reversed 4 sectors, used for rf init data and paramters.
@@ -181,6 +182,7 @@ static void _demo_message_arrive(void *pcontext, void *pclient, iotx_mqtt_event_
     EXAMPLE_TRACE("----");
 }
 
+
 int mqtt_client(void)
 {
     int rc = 0, msg_len, cnt = 0;
@@ -190,27 +192,27 @@ int mqtt_client(void)
     iotx_mqtt_topic_info_t topic_msg;
     char msg_pub[128];
     char *msg_buf = NULL, *msg_readbuf = NULL;
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
+
     if (NULL == (msg_buf = (char *)HAL_Malloc(MSG_LEN_MAX))) {
         EXAMPLE_TRACE("not enough memory");
         rc = -1;
         goto do_exit;
     }
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
+
     if (NULL == (msg_readbuf = (char *)HAL_Malloc(MSG_LEN_MAX))) {
         EXAMPLE_TRACE("not enough memory");
         rc = -1;
         goto do_exit;
     }
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
+
     /* Device AUTH */
-    printf("\n**************\nPRODUCT_KEY:%s \nDEVICE_NAME:%s\nDEVICE_SECRET:%s\n*****************\n",PRODUCT_KEY, DEVICE_NAME, DEVICE_SECRET);
+
     if (0 != IOT_SetupConnInfo(PRODUCT_KEY, DEVICE_NAME, DEVICE_SECRET, (void **)&pconn_info)) {
         EXAMPLE_TRACE("AUTH request failed!");
         rc = -1;
         goto do_exit;
     }
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
+
     /* Initialize MQTT parameter */
     memset(&mqtt_params, 0x0, sizeof(mqtt_params));
 
@@ -233,25 +235,14 @@ int mqtt_client(void)
     mqtt_params.handle_event.pcontext = NULL;
 
     /* Construct a MQTT client with specify parameter */
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
+
     pclient = IOT_MQTT_Construct(&mqtt_params);
-    printf("file:%s function:%s line:%d heap size:%d pClient:%p\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size(), pclient);
     if (NULL == pclient) {
         EXAMPLE_TRACE("MQTT construct failed");
         rc = -1;
         goto do_exit;
     }
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
-#if 1
-    xTaskCreate(ota_main, "ota_main", 2048, pclient, 5, NULL);
-    while(1){
-        vTaskDelay(2000 / portTICK_RATE_MS);
-        printf("[heap check]file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
-    }
-#endif
 
-
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
     /* Subscribe the specific topic */
 //    rc = IOT_MQTT_Subscribe(pclient, TOPIC_DATA, IOTX_MQTT_QOS1, _demo_message_arrive, NULL);
     rc = IOT_MQTT_Subscribe(pclient, TOPIC_DATA, IOTX_MQTT_QOS1, _demo_message_arrive, NULL);
@@ -262,17 +253,6 @@ int mqtt_client(void)
         rc = -1;
         goto do_exit;
     }
-
-//  receive relay MQTT message
-#if 0
-    rc = IOT_MQTT_Subscribe(pclient, TOPIC_RELAY, IOTX_MQTT_QOS1, _demo_message_arrive, NULL);
-    if (rc < 0) {
-        IOT_MQTT_Destroy(&pclient);
-        EXAMPLE_TRACE("IOT_MQTT_Subscribe() failed, rc = %d", rc);
-        rc = -1;
-        goto do_exit;
-    }
-#endif
 
     HAL_SleepMs(1000);
 
@@ -299,7 +279,7 @@ int mqtt_client(void)
             topic_msg.payload_len = msg_len;
 
             rc = IOT_MQTT_Publish(pclient, TOPIC_DATA, &topic_msg);
-            //printf("file:%s function:%s line:%d heap size:%d rc:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size(), rc);
+
             if (rc < 0) {
                 EXAMPLE_TRACE("error occur when publish");
                 rc = -1;
@@ -324,24 +304,187 @@ int mqtt_client(void)
         }
         /* Generate topic message */
     }
-    //printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
-    //printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
+
     IOT_MQTT_Unsubscribe(pclient, TOPIC_DATA);
     IOT_MQTT_Unsubscribe(pclient, TOPIC_RELAY);
-    HAL_SleepMs(200);
-    //printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
+
     IOT_MQTT_Destroy(&pclient);
 
 do_exit:
-//printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
+
     if (NULL != msg_buf) {
         HAL_Free(msg_buf);
     }
-    //printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
+
     if (NULL != msg_readbuf) {
         HAL_Free(msg_readbuf);
     }
-    //printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
+
+    return rc;
+}
+
+int ota_client(void)
+{
+    int rc = 0, ota_over = 0;
+    void *pclient = NULL, *h_ota = NULL;
+    iotx_conn_info_pt pconn_info;
+    iotx_mqtt_param_t mqtt_params;
+    char *msg_buf = NULL, *msg_readbuf = NULL;
+    char buf_ota[OTA_BUF_LEN];
+
+    if (NULL == (msg_buf = (char *)HAL_Malloc(MSG_LEN_MAX))) {
+        EXAMPLE_TRACE("not enough memory");
+        rc = -1;
+        goto do_exit;
+    }
+
+    if (NULL == (msg_readbuf = (char *)HAL_Malloc(MSG_LEN_MAX))) {
+        EXAMPLE_TRACE("not enough memory");
+        rc = -1;
+        goto do_exit;
+    }
+
+    /* Device AUTH */
+    if (0 != IOT_SetupConnInfo(PRODUCT_KEY, DEVICE_NAME, DEVICE_SECRET, (void **)&pconn_info)) {
+        EXAMPLE_TRACE("AUTH request failed!");
+        rc = -1;
+        goto do_exit;
+    }
+
+    /* Initialize MQTT parameter */
+    memset(&mqtt_params, 0x0, sizeof(mqtt_params));
+
+    mqtt_params.port = pconn_info->port;
+    mqtt_params.host = pconn_info->host_name;
+    mqtt_params.client_id = pconn_info->client_id;
+    mqtt_params.username = pconn_info->username;
+    mqtt_params.password = pconn_info->password;
+    mqtt_params.pub_key = pconn_info->pub_key;
+
+    mqtt_params.request_timeout_ms = 2000;
+    mqtt_params.clean_session = 0;
+    mqtt_params.keepalive_interval_ms = 60000;
+    mqtt_params.pread_buf = msg_readbuf;
+    mqtt_params.read_buf_size = MSG_LEN_MAX;
+    mqtt_params.pwrite_buf = msg_buf;
+    mqtt_params.write_buf_size = MSG_LEN_MAX;
+
+    mqtt_params.handle_event.h_fp = event_handle;
+    mqtt_params.handle_event.pcontext = NULL;
+
+
+    /* Construct a MQTT client with specify parameter */
+    pclient = IOT_MQTT_Construct(&mqtt_params);
+    if (NULL == pclient) {
+        EXAMPLE_TRACE("MQTT construct failed");
+        rc = -1;
+        goto do_exit;
+    }
+    h_ota = IOT_OTA_Init(PRODUCT_KEY, DEVICE_NAME, pclient);
+    if (NULL == h_ota) {
+        rc = -1;
+        EXAMPLE_TRACE("initialize OTA failed");
+        goto do_exit;
+    }
+
+    if (0 != IOT_OTA_ReportVersion(h_ota, "iotx_esp_1.0.0")) {
+        rc = -1;
+        EXAMPLE_TRACE("report OTA version failed");
+        goto do_exit;
+    }
+
+    HAL_SleepMs(1000);
+
+    system_upgrade_flag_set(UPGRADE_FLAG_START);
+    system_upgrade_init();
+
+    system_upgrade("erase flash", ERASE_FLASH_SIZE);
+
+    // OTA timeout
+    os_timer_disarm(&ota_timer);
+    os_timer_setfn(&ota_timer, (os_timer_func_t *)upgrade_recycle, NULL);
+    os_timer_arm(&ota_timer, OTA_TIMEOUT, 0);
+
+    while (1) {
+        if (!ota_over) {
+            uint32_t firmware_valid;
+
+            EXAMPLE_TRACE("wait ota upgrade command....");
+
+            /* handle the MQTT packet received from TCP or SSL connection */
+            IOT_MQTT_Yield(pclient, 200);
+
+            if (IOT_OTA_IsFetching(h_ota)) {
+                uint32_t last_percent = 0, percent = 0;
+                char version[128], md5sum[33];
+                uint32_t len, size_downloaded, size_file;
+
+                do {
+                    len = IOT_OTA_FetchYield(h_ota, buf_ota, OTA_BUF_LEN, 1);
+                    if (len > 0) {
+
+                        if (false == system_upgrade(buf_ota, len)){
+                            system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
+                            upgrade_recycle();
+                        }
+                        binary_file_length += len;
+                        printf("Have written image length %d\n", binary_file_length);
+
+                    }
+
+                    /* get OTA information */
+                    IOT_OTA_Ioctl(h_ota, IOT_OTAG_FETCHED_SIZE, &size_downloaded, 4);
+                    IOT_OTA_Ioctl(h_ota, IOT_OTAG_FILE_SIZE, &size_file, 4);
+                    IOT_OTA_Ioctl(h_ota, IOT_OTAG_MD5SUM, md5sum, 33);
+                    IOT_OTA_Ioctl(h_ota, IOT_OTAG_VERSION, version, 128);
+
+                    last_percent = percent;
+                    percent = (size_downloaded * 100) / size_file;
+                    if (percent - last_percent > 0) {
+                        IOT_OTA_ReportProgress(h_ota, percent, NULL);
+                        IOT_OTA_ReportProgress(h_ota, percent, "hello");
+                    }
+                    IOT_MQTT_Yield(pclient, 100);
+                } while (!IOT_OTA_IsFetchFinish(h_ota));
+
+                IOT_OTA_Ioctl(h_ota, IOT_OTAG_CHECK_FIRMWARE, &firmware_valid, 4);
+                if (0 == firmware_valid) {
+                    EXAMPLE_TRACE("The firmware is invalid");
+                } else {
+                    if(upgrade_crc_check(system_get_fw_start_sec(),binary_file_length) != true) {
+                        printf("upgrade crc check failed !\n");
+                        system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
+                        upgrade_recycle();
+                    }
+                system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
+                upgrade_recycle();
+                }
+                ota_over = 1;
+            }
+            HAL_SleepMs(2000);
+        }
+    }
+
+    HAL_SleepMs(200);
+
+do_exit:
+
+    if (NULL != h_ota) {
+        IOT_OTA_Deinit(h_ota);
+    }
+
+    if (NULL != pclient) {
+        IOT_MQTT_Destroy(&pclient);
+    }
+
+    if (NULL != msg_buf) {
+        HAL_Free(msg_buf);
+    }
+
+    if (NULL != msg_readbuf) {
+        HAL_Free(msg_readbuf);
+    }
+
     return rc;
 }
 
@@ -354,6 +497,18 @@ void mqtt_proc(void*para)
         printf("[ALIYUN] MQTT client example begin, free heap size:%d\n", system_get_free_heap_size());
         mqtt_client();
         printf("[ALIYUN] MQTT client example end, free heap size:%d\n", system_get_free_heap_size());
+    }
+}
+
+void ota_proc(void*para)
+{
+    while(1){   // reconnect to tls
+        while(!got_ip_flag){
+            vTaskDelay(2000 / portTICK_RATE_MS);
+        }
+        printf("[ALIYUN] OTA client example begin, free heap size:%d\n", system_get_free_heap_size());
+        ota_client();
+        printf("[ALIYUN] OTA client example end, free heap size:%d\n", system_get_free_heap_size());
     }
 }
 
@@ -438,50 +593,6 @@ void heap_check_task(void*para){
 }
 
 
-void json_test(void) {
-    uint8_t json[512] = {0};
-
-    cJSON *root = cJSON_CreateObject();
-    cJSON *sensors = cJSON_CreateArray();
-    cJSON *id1 = cJSON_CreateObject();
-    cJSON *id2 = cJSON_CreateObject();
-    cJSON *iNumber = cJSON_CreateNumber(10);
-
-    cJSON_AddItemToObject(id1, "id", cJSON_CreateString("1"));
-    cJSON_AddItemToObject(id1, "temperature1", cJSON_CreateString("23"));
-    cJSON_AddItemToObject(id1, "temperature2", cJSON_CreateString("23"));
-    cJSON_AddItemToObject(id1, "humidity", cJSON_CreateString("55"));
-    cJSON_AddItemToObject(id1, "occupancy", cJSON_CreateString("1"));
-    cJSON_AddItemToObject(id1, "illumination", cJSON_CreateString("23"));
-
-    cJSON_AddItemToObject(id2, "id", cJSON_CreateString("2"));
-    cJSON_AddItemToObject(id2, "temperature1", cJSON_CreateString("23"));
-    cJSON_AddItemToObject(id2, "temperature2", cJSON_CreateString("23"));
-    cJSON_AddItemToObject(id2, "humidity", cJSON_CreateString("55"));
-    cJSON_AddItemToObject(id2, "occupancy", cJSON_CreateString("1"));
-    cJSON_AddItemToObject(id2, "illumination", cJSON_CreateString("23"));
-
-    cJSON_AddItemToObject(id2, "value", iNumber);
-
-    cJSON_AddItemToArray(sensors, id1);
-    cJSON_AddItemToArray(sensors, id2);
-
-    cJSON_AddItemToObject(root, "sensors", sensors);
-#if 0
-    char *str = cJSON_Print(root);
-#else
-    char *str = cJSON_PrintUnformatted(root);
-#endif
-    uint32_t jslen = strlen(str);
-    memcpy(json, str, jslen);
-    printf("%s\n", json);
-
-    cJSON_Delete(root);
-    free(str);
-    str = NULL;
-}
-
-
 void user_init(void)
 {
     extern unsigned int max_content_len;
@@ -492,16 +603,19 @@ void user_init(void)
     IOT_SetLogLevel(IOT_LOG_DEBUG);
     initialize_wifi();
 
-#if 1
-    //xTaskCreate(heap_check_task, "heap_check_task", 128, NULL, 5, NULL);
+#if HEAP_CHECK_TASK
+    xTaskCreate(heap_check_task, "heap_check_task", 128, NULL, 5, NULL);
+#endif
+
+#if MQTT_TASK
     xTaskCreate(mqtt_proc, "mqttex", 2048, NULL, 5, NULL);
-#endif
+    printf("\nMQTT Task Started...\n");
+#elif OTA_TASK
+    xTaskCreate(ota_proc, "otaex", 2048, NULL, 5, NULL);
+    printf("\nOTA Task Started...\n");
+#else
 
-// DO JSON Test
-#if 0
-    json_test();
 #endif
-
 
 }
 

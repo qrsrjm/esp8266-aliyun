@@ -44,12 +44,27 @@
 #define UPGRADE_FW_BIN1         0x00
 #define UPGRADE_FW_BIN2         0x01
 
+#define LOCAL_OTA_SERVER_IP       "192.168.111.104"
+#define LOCAL_OTA_SERVER_PORT     80
+
+#define OTA_TIMEOUT 120000  //120000 ms
+
+#define DNS_TEST 0
+
+#define pheadbuffer "Connection: keep-alive\r\n\
+Cache-Control: no-cache\r\n\
+User-Agent: Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.101 Safari/537.36 \r\n\
+Accept: */*\r\n\
+Accept-Encoding: gzip,deflate,sdch\r\n\
+Accept-Language: zh-CN,zh;q=0.8\r\n\r\n"
+
+
 void system_upgrade_init();
 bool system_upgrade(uint8 *data, uint32 len);
 void system_upgrade_deinit(void);
 
 void print_debug(const char* data, const int len, const char* note);
-
+void upgrade_recycle(void);
 void ota_main(void *pvParameter);
 
 #endif

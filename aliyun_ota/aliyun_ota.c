@@ -29,6 +29,11 @@
 #include "aliyun_config.h"
 #include "aliyun_ota.h"
 
+LOCAL uint32 totallength = 0;
+LOCAL uint32 sumlength = 0;
+LOCAL bool flash_erased = false;
+LOCAL os_timer_t upgrade_timer;
+
 struct upgrade_param {
     uint32 fw_bin_addr;
     uint16 fw_bin_sec;
@@ -41,15 +46,12 @@ struct upgrade_param {
 
 LOCAL struct upgrade_param *upgrade;
 
-//extern SpiFlashChip *flashchip;
-
 LOCAL bool OUT_OF_RANGE(uint16 erase_sec)
 {
     uint8 spi_size_map = system_get_flash_size_map();
     uint16 sec_num = 0;
     uint16 start_sec = 0;
     
-
     if (spi_size_map == FLASH_SIZE_8M_MAP_512_512 || 
             spi_size_map ==FLASH_SIZE_16M_MAP_512_512 ||
             spi_size_map ==FLASH_SIZE_32M_MAP_512_512){
@@ -69,7 +71,6 @@ LOCAL bool OUT_OF_RANGE(uint16 erase_sec)
     } else {
         return true;
     }
-    
 }
 
 /******************************************************************************
@@ -78,8 +79,7 @@ LOCAL bool OUT_OF_RANGE(uint16 erase_sec)
  * Parameters   :
  * Returns      :
 *******************************************************************************/
-LOCAL bool  
-system_upgrade_internal(struct upgrade_param *upgrade, uint8 *data, u32 len)
+LOCAL bool system_upgrade_internal(struct upgrade_param *upgrade, uint8 *data, u32 len)
 {
     bool ret = false;
     uint16 secnm=0;
@@ -175,10 +175,19 @@ bool system_upgrade(uint8 *data, uint32 len)
     return ret;
 }
 
-LOCAL void upgrade_recycle(void)
+void upgrade_recycle(void)
 {
+    totallength = 0;
+    sumlength = 0;
+    flash_erased = false;
+
     system_upgrade_deinit();
-    system_upgrade_reboot(); // if need
+
+
+    if (system_upgrade_flag_check() == UPGRADE_FLAG_FINISH) {
+        system_upgrade_reboot(); // if need
+    }
+    vTaskDelete(NULL);
 }
 
 
@@ -234,8 +243,10 @@ system_upgrade_deinit(void)
         free(upgrade);
         upgrade = NULL;
     }else {
-        return;
+
     }
+    printf("ota end, free heap size:%d\n", system_get_free_heap_size());
+    return;
 }
 
 void print_debug(const char* data, const int len, const char* note){
@@ -267,80 +278,202 @@ void print_debug(const char* data, const int len, const char* note){
 printf("\n---------- %s End ----------\n", note);
 }
 
+/******************************************************************************
+ * FunctionName : upgrade_download
+ * Description  : parse http response ,and download remote data and write in flash
+ * Parameters   : int sta_socket : ota client socket fd
+ *                char *pusrdata : remote data
+ *                length         : data length
+ * Returns      : none
+*******************************************************************************/
+void upgrade_download(int sta_socket,char *pusrdata, unsigned short length)
+{
+    char *ptr = NULL;
+    char *ptmp2 = NULL;
+    char lengthbuffer[32];
+    if (totallength == 0 && (ptr = (char *)strstr(pusrdata, "\r\n\r\n")) != NULL &&
+            (ptr = (char *)strstr(pusrdata, "Content-Length")) != NULL) {
+        ptr = (char *)strstr(pusrdata, "\r\n\r\n");
+        length -= ptr - pusrdata;
+        length -= 4;
+        printf("upgrade file download start.\n");
 
+        ptr = (char *)strstr(pusrdata, "Content-Length: ");
+        if (ptr != NULL) {
+            ptr += 16;
+            ptmp2 = (char *)strstr(ptr, "\r\n");
 
-void ota_main(void *pvParameter){
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
-    printf("param:%p\n", pvParameter);
-    int ota_over = 0;
-    char buf_ota[OTA_BUF_LEN] = { 0 };
-    void* pclient = pvParameter, *h_ota = NULL;
-    h_ota = IOT_OTA_Init(PRODUCT_KEY, DEVICE_NAME, pclient);
-    if (NULL == h_ota) {
-        printf("h_ota is NULL,task deleting...\n");
-        vTaskDelete(NULL);
-    }
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
-    if (0 != IOT_OTA_ReportVersion(h_ota, "iotx_ver_1.0.0")) {
-        printf("IOT_OTA_ReportVersion error,task deleting...\n");
-        vTaskDelete(NULL);
-    }
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
-    system_upgrade_init();
-    printf("file:%s function:%s line:%d heap size:%d\n",__FILE__,__FUNCTION__,__LINE__, system_get_free_heap_size());
-    do {
-        uint32_t firmware_valid;
-
-        EXAMPLE_TRACE("wait ota upgrade command....");
-
-        /* handle the MQTT packet received from TCP or SSL connection */
-        IOT_MQTT_Yield(pclient, 200);
-
-        if (IOT_OTA_IsFetching(h_ota)) {
-            uint32_t last_percent = 0, percent = 0;
-            char version[128], md5sum[33];
-            uint32_t len, size_downloaded, size_file;
-            do {
-
-                len = IOT_OTA_FetchYield(h_ota, buf_ota, OTA_BUF_LEN, 1);
-                if (len > 0) {
-                    print_debug(buf_ota, len, "receive data from console");
-                    if (system_upgrade(buf_ota, len) == false){
-                        printf("system_upgrade error happended!\n");
-                        vTaskDelete(NULL);
+            if (ptmp2 != NULL) {
+                memset(lengthbuffer, 0, sizeof(lengthbuffer));
+                memcpy(lengthbuffer, ptr, ptmp2 - ptr);
+                sumlength = atoi(lengthbuffer);
+                if(sumlength > 0) {
+                    if (false == system_upgrade(pusrdata, sumlength)) {
+                        system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
+                        goto ota_recycle;
                     }
+                    flash_erased = true;
+                    ptr = (char *)strstr(pusrdata, "\r\n\r\n");
+                    if (false == system_upgrade(ptr + 4, length)){
+                        system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
+                        goto ota_recycle;
+                    }
+                    totallength += length;
+                    printf("sumlength = %d\n",sumlength);
+                    return;
                 }
-
-                /* get OTA information */
-                IOT_OTA_Ioctl(h_ota, IOT_OTAG_FETCHED_SIZE, &size_downloaded, 4);
-                IOT_OTA_Ioctl(h_ota, IOT_OTAG_FILE_SIZE, &size_file, 4);
-                IOT_OTA_Ioctl(h_ota, IOT_OTAG_MD5SUM, md5sum, 33);
-                IOT_OTA_Ioctl(h_ota, IOT_OTAG_VERSION, version, 128);
-
-                last_percent = percent;
-                percent = (size_downloaded * 100) / size_file;
-                if (percent - last_percent > 0) {
-                    IOT_OTA_ReportProgress(h_ota, percent, NULL);
-                    IOT_OTA_ReportProgress(h_ota, percent, "hello");
-                }
-                IOT_MQTT_Yield(pclient, 100);
-            }while(!IOT_OTA_IsFetchFinish(h_ota));
-
-//            IOT_OTA_Ioctl(h_ota, IOT_OTAG_CHECK_FIRMWARE, &firmware_valid, 4);
-//            if (0 == firmware_valid) {
-//                EXAMPLE_TRACE("The firmware is invalid");
-//            } else {
-//                EXAMPLE_TRACE("The firmware is valid");
-//
-//            }
-
-            ota_over = 1;
+            } else {
+                printf("sumlength failed\n");
+                system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
+                goto ota_recycle;
+            }
+        } else {
+            printf("Content-Length: failed\n");
+            system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
+            goto ota_recycle;
         }
-        HAL_SleepMs(2000);
-    } while (!ota_over);
+    } else {
+        if(totallength == 0 && sumlength == 0){
+            printf("%s\n", pusrdata);
+            return;
+        }
+        totallength += length;
+        printf("totallen = %d\n",totallength);
+        if (false == system_upgrade(pusrdata, length)){
+            system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
+            goto ota_recycle;
+        }
+        if (totallength == sumlength) {
+            printf("upgrade file download finished.\n");
 
-    upgrade_recycle();
+            if(upgrade_crc_check(system_get_fw_start_sec(),sumlength) != true) {
+                printf("upgrade crc check failed !\n");
+                system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
+                goto ota_recycle;
+            }
 
-    HAL_SleepMs(1000);
-    vTaskDelete(NULL);
+        system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
+        goto ota_recycle;
+        } else {
+            return;
+        }
+    }
+
+
+ota_recycle :
+        printf("go to ota recycle\n");
+        close(sta_socket);
+        upgrade_recycle();
+
 }
+
+/******************************************************************************
+ * FunctionName : ota_begin
+ * Description  : ota_task function
+ * Parameters   : task param
+ * Returns      : none
+*******************************************************************************/
+void ota_begin()
+{
+    int recbytes;
+    int sin_size;
+    int sta_socket;
+    char recv_buf[1460];
+    uint8 user_bin[21] = {0};
+    struct sockaddr_in remote_ip;
+    printf("Hello, welcome to client!\r\n");
+    printf("ota serer addr %s port %d\n", LOCAL_OTA_SERVER_IP, LOCAL_OTA_SERVER_PORT);
+
+#if DNS_TEST
+    #define OTA_SERVER_NAME "www.espressif.com"
+    ip_addr_t target_ip;
+    int ret;
+    do {
+        ret = netconn_gethostbyname(OTA_SERVER_NAME, &target_ip);
+    } while(ret);
+    os_printf("get target IP is %d.%d.%d.%d\n", (unsigned char)((target_ip.addr & 0x000000ff) >> 0),
+                                                (unsigned char)((target_ip.addr & 0x0000ff00) >> 8),
+                                                (unsigned char)((target_ip.addr & 0x00ff0000) >> 16),
+                                                (unsigned char)((target_ip.addr & 0xff000000) >> 24));
+    remote_ip.sin_addr.s_addr = target_ip.addr;
+    while(1){
+        vTaskDelay(2000 / portTICK_RATE_MS);
+    }
+#endif
+
+
+    while (1) {
+        sta_socket = socket(PF_INET,SOCK_STREAM,0);
+        if (-1 == sta_socket)
+        {
+
+            close(sta_socket);
+            printf("socket fail !\r\n");
+            continue;
+        }
+        printf("socket ok!\r\n");
+        bzero(&remote_ip,sizeof(struct sockaddr_in));
+        remote_ip.sin_family=AF_INET;
+
+        remote_ip.sin_addr.s_addr= inet_addr(LOCAL_OTA_SERVER_IP);
+        remote_ip.sin_port=htons(LOCAL_OTA_SERVER_PORT);
+
+        if(0 != connect(sta_socket,(struct sockaddr *)(&remote_ip),sizeof(struct sockaddr)))
+        {
+            close(sta_socket);
+            printf("connect fail!\r\n");
+            system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
+            upgrade_recycle();
+        }
+        printf("connect ok!\r\n");
+        char *pbuf = (char *)zalloc(512);
+        if (system_upgrade_userbin_check() == UPGRADE_FW_BIN1) {
+            memcpy(user_bin, "user2.2048.new.5.bin", 21);
+
+        } else if (system_upgrade_userbin_check() == UPGRADE_FW_BIN2) {
+            memcpy(user_bin, "user1.2048.new.5.bin", 21);
+        }
+
+        sprintf(pbuf, "GET /%s HTTP/1.0\r\nHost: \"%s\":%d\r\n"pheadbuffer"",
+                       user_bin, LOCAL_OTA_SERVER_IP, LOCAL_OTA_SERVER_PORT);
+
+        printf(pbuf);
+        if(write(sta_socket,pbuf,strlen(pbuf)+1) < 0) {
+                close(sta_socket);
+                printf("send fail\n");
+                free(pbuf);
+                upgrade_recycle();
+        }
+        printf("send success\n");
+        free(pbuf);
+
+        while((recbytes = read(sta_socket ,recv_buf,1460)) >= 0){
+            if(recbytes != 0 ) {
+                upgrade_download(sta_socket,recv_buf,recbytes);
+            }
+        }
+        printf("recbytes = %d\n",recbytes);
+        if(recbytes < 0){
+            printf("read data fail!\r\n");
+            close(sta_socket);
+            system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
+            upgrade_recycle();
+        }
+    }
+}
+
+// ota main task
+void ota_main(void *pvParameter){
+    printf("ota begin, free heap size:%d\n", system_get_free_heap_size());
+    system_upgrade_flag_set(UPGRADE_FLAG_START);
+    system_upgrade_init();
+
+    ota_begin();
+
+    // OTA timeout
+    os_timer_disarm(&upgrade_timer);
+    os_timer_setfn(&upgrade_timer, (os_timer_func_t *)upgrade_recycle, NULL);
+    os_timer_arm(&upgrade_timer, OTA_TIMEOUT, 0);
+
+}
+
