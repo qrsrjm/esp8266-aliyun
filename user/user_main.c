@@ -42,7 +42,7 @@
 #include "aliyun_config.h"
 #include "aliyun_ota.h"
 
-static int got_ip_flag = 0;
+extern int got_ip_flag;
 static int binary_file_length = 0;
 LOCAL os_timer_t ota_timer;
 
@@ -602,16 +602,20 @@ void user_init(void)
     IOT_OpenLog("mqtt");
     IOT_SetLogLevel(IOT_LOG_DEBUG);
     initialize_wifi();
+    got_ip_flag = 0;
 
 #if HEAP_CHECK_TASK
     xTaskCreate(heap_check_task, "heap_check_task", 128, NULL, 5, NULL);
 #endif
 
 #if MQTT_TASK
-    xTaskCreate(mqtt_proc, "mqttex", 2048, NULL, 5, NULL);
+    xTaskCreate(mqtt_proc, "mqtt_proc", 2048, NULL, 5, NULL);
     printf("\nMQTT Task Started...\n");
+#elif LOCAL_OTA
+    printf("\nLocal OTA Task Started...\n");
+    xTaskCreate(ota_main, "ota_main", 2048, NULL, 5, NULL);
 #elif OTA_TASK
-    xTaskCreate(ota_proc, "otaex", 2048, NULL, 5, NULL);
+    xTaskCreate(ota_proc, "ota_proc", 2048, NULL, 5, NULL);
     printf("\nOTA Task Started...\n");
 #else
 

@@ -33,6 +33,7 @@ LOCAL uint32 totallength = 0;
 LOCAL uint32 sumlength = 0;
 LOCAL bool flash_erased = false;
 LOCAL os_timer_t upgrade_timer;
+extern int got_ip_flag;
 
 struct upgrade_param {
     uint32 fw_bin_addr;
@@ -464,6 +465,12 @@ void ota_begin()
 
 // ota main task
 void ota_main(void *pvParameter){
+#if LOCAL_OTA
+    while(!got_ip_flag){
+        vTaskDelay(2000 / portTICK_RATE_MS);
+        printf("wait for fetching IP...\n");
+    }
+#endif
     printf("ota begin, free heap size:%d\n", system_get_free_heap_size());
     system_upgrade_flag_set(UPGRADE_FLAG_START);
     system_upgrade_init();

@@ -5,13 +5,10 @@
 #define HEAP_CHECK_TASK 0
 
 #define MQTT_TASK 0
-#define OTA_TASK 1
-
+#define LOCAL_OTA 1
+#define OTA_TASK 0
 
 #define MQTT_DIRECT
-
-
-
 
 #define PRODUCT_KEY             "ymXuzyfmuQb"
 #define DEVICE_NAME             "esp8266_test001"
@@ -28,6 +25,7 @@
 #define WIFI_PASSWORD   "1234567890"
 #define MSG_LEN_MAX             (2048)
 
+int got_ip_flag;
 
 #define OTA_BUF_LEN 1460
 #define ERASE_FLASH_SIZE 400 * 1024
